@@ -1,19 +1,25 @@
 import { invoke } from '@tauri-apps/api/tauri'
-
 export default class Rusqlite {
   name: string;
+  useSqlCipher: boolean;
+  encryptionKey?: string;
 
-  constructor(name: string) {
+  constructor(name: string, useSqlCipher: boolean = false, encryptionKey?: string) {
     this.name = name;
-  }
-  
-  static async openInMemory(name: string): Promise<Rusqlite> {
-    return await invoke('plugin:rusqlite|open_in_memory', {name: name}).then(() => new Rusqlite(name));
+    this.useSqlCipher = useSqlCipher;
+    this.encryptionKey = encryptionKey;
   }
 
-  static async openInPath(path: string): Promise<Rusqlite> {
-    return await invoke('plugin:rusqlite|open_in_path', {path: path}).then(() => new Rusqlite(path));
+  static async openInMemory(name: string, useSqlCipher: boolean = false, encryptionKey?: string): Promise<Rusqlite> {
+    return await invoke('plugin:rusqlite|open_in_memory', { name, useSqlCipher, encryptionKey })
+      .then(() => new Rusqlite(name, useSqlCipher, encryptionKey));
   }
+
+  static async openInPath(path: string, useSqlCipher: boolean = false, encryptionKey?: string): Promise<Rusqlite> {
+    return await invoke('plugin:rusqlite|open_in_path', { path, useSqlCipher, encryptionKey })
+      .then(() => new Rusqlite(path, useSqlCipher, encryptionKey));
+  }
+
 
   async migration(migrations: Migration[]): Promise<void> {
     return await invoke('plugin:rusqlite|migration', {name: this.name, migrations});

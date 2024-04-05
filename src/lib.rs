@@ -4,7 +4,6 @@ use commands::{
     update::execute_update,
 };
 use error::Error;
-use rusqlite::{Connection, OpenFlags};
 use serde_json::Value as JsonValue;
 use std::{collections::HashMap, sync::Mutex};
 use tauri::{
@@ -13,6 +12,12 @@ use tauri::{
     Manager, Runtime, State,
 };
 use types::Migrations;
+// 기능 플래그를 사용한 조건부 컴파일을 위해 `cfg` 속성 사용
+#[cfg(feature = "sqlcipher")]
+use rusqlite::{params, Connection, OpenFlags};
+
+#[cfg(not(feature = "sqlcipher"))]
+use rusqlite::Connection;
 
 mod commands;
 mod common;
@@ -22,21 +27,54 @@ mod types;
 #[derive(Default)]
 struct ConfigState(Mutex<HashMap<String, Connection>>);
 
-#[command]
-async fn open_in_memory(state: State<'_, ConfigState>, name: String) -> Result<()> {
-    let connection = Connection::open_in_memory()
-        .map_err(|error| Error::OpeningConnection(error.to_string()))?;
-
-    insert_connection(state, connection, name)
+// Assuming your custom error module is named `error` and has a type named `Error`
+impl From<rusqlite::Error> for error::Error {
+    fn from(err: rusqlite::Error) -> Self {
+        // Here you should convert a `rusqlite::Error` into your custom error type.
+        // This is just an example; adjust the conversion logic according to your error type's structure.
+        error::Error::Database(err.to_string())
+    }
 }
 
+
+// Assuming `open_in_path` is being called and it's supposed to open a database connection.
 #[command]
-async fn open_in_path(state: State<'_, ConfigState>, path: String) -> Result<()> {
-    let connection = Connection::open_with_flags(path.clone(), OpenFlags::default())
-        .map_err(|error| Error::OpeningConnection(error.to_string()))?;
+async fn open_in_path(state: State<'_, ConfigState>, path: String, use_sqlcipher: bool, cipher_key: Option<String>) -> Result<()> {
+    // Connection::open and Connection::open_with_flags return a Result type.
+    let connection_result = if use_sqlcipher {
+        #[cfg(feature = "sqlcipher")]
+        {
+            let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE)?;
+            if let Some(key) = cipher_key {
+                // This execute call returns a Result, so you can use map_err here
+                conn.execute("PRAGMA key = ?", params![key]).map_err(|e| Error::SqliteError(e.to_string()))?;
+            }
+            Ok(conn) // Wrap the connection in a Result if not already
+        }
+        #[cfg(not(feature = "sqlcipher"))]
+        {
+            // If not using SQLCipher, just try to open the connection normally.
+            Connection::open(&path)
+        }
+    } else {
+        // If not using SQLCipher
+        Connection::open(&path)
+    };
+
+    // Here, connection_result is a Result, so you can use map_err (if needed).
+    let connection = connection_result.map_err(|e| Error::OpeningConnection(e.to_string()))?;
 
     insert_connection(state, connection, path)
 }
+
+
+// #[command]
+// async fn open_in_path(state: State<'_, ConfigState>, path: String) -> Result<()> {
+//     let connection = Connection::open_with_flags(path.clone(), OpenFlags::default())
+//         .map_err(|error| Error::OpeningConnection(error.to_string()))?;
+
+//     insert_connection(state, connection, path)
+// }
 
 fn insert_connection(
     state: State<'_, ConfigState>,
